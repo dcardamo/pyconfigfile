@@ -1,10 +1,10 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # -*- mode: python; tab-width: 4 -*-
 # vim: set tabstop=4 shiftwidth=4 expandtab:
 
-# Copyright (C) Ottawa Python Author's Group
-# Website: http://www.opag.ca
-# Mailing list:  opag@opag.ca
+# Copyright (C) Dan Cardamore
+# Website: http://www.hld.ca/opensource/CVSWEB/pyConfigFile
+# Mailing list:  opag@opag.ca Ottawa Python Authors Group
 # Authors: Dan Cardamore <dan@hld.ca>
 # 
 # This program is free software; you can redistribute it and/or
@@ -41,14 +41,14 @@ const.NOCHECK=0
 const.FALSE=0
 
 # Our Exception classes
-class ConfigFileSyntaxError:
+class SyntaxError:
 	"""Raised when there is an error in the syntax of the config file itself"""
-	SyntaxError = "Error parsing the file because of improper syntax"
+	Unknown = "Error parsing the file because of improper syntax"
 	NonExistantKey = "The key requested does not exist"
 	UnknownType = "The first line of the file was not descriptive enough"
 	ExecNotAllowed = "You do not have access to execute commands"
 
-class ConfigFileUsageError:
+class UsageError:
 	"""Raised when this module is used incorrectly"""
 	pass
 
@@ -92,7 +92,7 @@ class ConfigFile:
 			raise IncompleteFunctionality, "We don't handle ConfigParser yet"
 
 		if not self.fileFormat:
-			raise ConfigFileSyntaxError.UnknownType
+			raise SyntaxError.UnknownType
 
 	def format(self):
 		return self.fileFormat
@@ -100,7 +100,7 @@ class ConfigFile:
 	def __setitem__(self, key, value):
 		"""Called when writing to the file"""
 		if self.readonly:
-			raise ConfigFileUsageError, "Attempted to write while file readonly"
+			raise UsageError, "Attempted to write while file readonly"
 		self.config[key] = value
 
 
@@ -129,8 +129,8 @@ class ConfigFileGeneric:
 			self.file = open(file, "r+")
 
 	def __getitem__(self, key):
-		if not exists(self.config[key]):
-			raise NonExistantKey, key		
+		if not self.config.has_key(key):
+			raise SyntaxError.NonExistantKey, key		
 		return self.config[key]
 
 	def __setitem__(self, key, value):
@@ -148,45 +148,84 @@ class ConfigFileShell(ConfigFileGeneric):
 		self.parse()
 
 	def parse(self):
-		for line in self.file.readlines():
+		configlines = self.file.readlines()
+		while (configlines):
+			line = configlines[0]         # get the first line
+			configlines = configlines[1:] # remove the line from the list
+			value = ""
 			line = line[:-1]   # remove newline character
 			line = re.sub(" #.*", "", line) # ignore anything following a ' #'
-			line = re.sub("^#.*", "", line) # ignore any line starting with a '#'
+			line = re.sub("^#.*", "", line) # ignore line starting with a '#'
 			line = re.sub("^\s+", "", line) # remove leading whitespace
+			line = re.split("\;", line)  # split the line for all ';'
+			configlines = line + configlines
+			line = configlines[0]                 # get the first line
+			configlines = configlines[1:]
+			
 			if line == "":
 				if DEBUG: print "---Empty Line Found---"
 				continue
 
+			# check for config command first
+			firstword = re.search("\w+", line).group(0)
+			if firstword == "echo":
+				print line
+				continue
+
+			# grab the key
 			key = re.search("^\w+", line).group(0)  # first word is the key
 			if DEBUG: print "---Key: %s---" %key
 			if key == None:
-				raise ConfigFileSyntaxError.SyntaxError, "variable name not found"
+				raise SyntaxError.Unknown, "variable name not found"
+			line = re.search("\=(.*)", line).group(0) # remove the key
+			line = line[1:] # remove the '='
 
-			if re.search("\`", line):       # is this a command?
+			# is this a system command?
+			if re.search("\`.*\`", line):
 				if not self.allowExec:
-					raise ConfigFileSyntaxError.ExecNotAllowed, line
+					raise SyntaxError.ExecNotAllowed, line
 
 				command = re.search("\`.*\`", line).group(0)
-				command = command[:-1]    # remove the last back tick
-				command = command[1:]     # remove the first back tick
-				#subsitute the command for a string
+				command = command[1:-1]   # remove the back ticks
+                #subsitute the command for a string
 				output = ""
 				for outline in os.popen(command, 'r').readlines():
 					output = output + outline[:-1]
-				output = output                # put it into a list
 				line = re.sub("\`.*\`", "\"" + output + "\"", line)
-				print line
-			
-			arrayItems = re.search("\(.*\)", line)			
-			if arrayItems:           # are we starting a list?
+
+
+			# perform substitution
+			varbs = re.search("\$\w+", line)
+			if varbs:
+				count = 0
+				while (1):
+					try:
+						testkey = varbs.group(count)[1:]
+					except IndexError:
+						break
+					if not self.config.has_key(testkey):
+						raise SyntaxError.NonExistantKey, "%s does not exist" %testkey
+					line = re.sub(re.escape(varbs.group(count)),
+								  self.config[testkey], line)
+					count = count + 1
+
+
+			# are we starting a list?
+			arrayItems = re.search("\(.*\)", line)
+			if arrayItems:
 				if DEBUG: print "---Starting a list!---"
 				continue
-			elif re.search("\[", line):         # are we working with an item of a list?
+			elif re.search("\[", line):         # working with a list item
 				if DEBUG: print "---Modifying a value in a list---"
 				continue
+			else:  # working with a plain variable
+				if DEBUG: print "---Creating a variable---"
+				value = line
 
-			if DEBUG: print line         # debug
-		
+			self.config[key] = value
+
+			#set the item
+			self.config[key] = value
 
 class ConfigFilePython(ConfigFileGeneric):
 	"""Handles Python format configuration files"""
@@ -201,26 +240,3 @@ class ConfigFilePython(ConfigFileGeneric):
 			print line
 
 
-
-# Start of test code:
-if __name__ == "__main__":
-	print "Performing tests..."
-	print "Testing Shell Mode..."
-	DEBUG = 0
-	try:
-		shell = ConfigFile("tests/config.sh")
-	except ConfigFileSyntaxError.ExecNotAllowed:
-		print "\tExecution Checking(disallowed)...ok"
-	else:
-		print "\tExecution Checking(disallowed)...failed"
-	try:
-		shell = ConfigFile("tests/config.sh", allowExec=1)
-	except ConfigFileSyntaxError.ExecNotAllowed:
-		print "\tExecution Checking(allowed)...failed"		
-	else:
-		print "\tExecution Checking(allowed)...ok"
-	
-
-
-## 	print "Testing Python Mode..."
-## 	python = ConfigFile("tests/config.py")

@@ -8,5 +8,5 @@ TEST2=$TEST  # $TEST designates a previous variable.
 list=(item1 item2 $TEST)  # this creates a list
 list[2]=$TEST     # sets an item in the list
 LENGTH=${#list}   # gets the length of the list
-OUTPUT=`ps -ef | grep init` # OUTPUT gets command output
+OUTPUT=`ps -ef | grep grep` # OUTPUT gets command output
 echo "Something"  # when parsed, this will be printed.
