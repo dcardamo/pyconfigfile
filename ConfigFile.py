@@ -21,7 +21,10 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
+import os
 import re
+
+DEBUG = 0               # turn debug printing off by default
 
 # define some constants.  These can't change.
 # this class is used to enforce constants in python.
@@ -43,6 +46,7 @@ class ConfigFileSyntaxError:
 	SyntaxError = "Error parsing the file because of improper syntax"
 	NonExistantKey = "The key requested does not exist"
 	UnknownType = "The first line of the file was not descriptive enough"
+	ExecNotAllowed = "You do not have access to execute commands"
 
 class ConfigFileUsageError:
 	"""Raised when this module is used incorrectly"""
@@ -118,6 +122,7 @@ class ConfigFileGeneric:
 		self.readonly = ro
 		self.fileFormat = None
 		self.config = {}
+
 		if self.readonly:
 			self.file = open(file, "r")
 		else:
@@ -138,14 +143,49 @@ class ConfigFileGeneric:
 class ConfigFileShell(ConfigFileGeneric):
 	"""Handles Shell format configuration files"""
 	def __init__(self, file, allowExec=const.FALSE, whitespace=const.NOCHECK, ro=const.TRUE):
-		ConfigFileGeneric.__init__(self, file, allowExec=None, whitespace=None, ro=const.TRUE)
+		ConfigFileGeneric.__init__(self, file, allowExec=allowExec, whitespace=whitespace, ro=ro)
 		self.fileFormat = "shell"
 		self.parse()
 
 	def parse(self):
 		for line in self.file.readlines():
 			line = line[:-1]   # remove newline character
-			print line
+			line = re.sub(" #.*", "", line) # ignore anything following a ' #'
+			line = re.sub("^#.*", "", line) # ignore any line starting with a '#'
+			line = re.sub("^\s+", "", line) # remove leading whitespace
+			if line == "":
+				if DEBUG: print "---Empty Line Found---"
+				continue
+
+			key = re.search("^\w+", line).group(0)  # first word is the key
+			if DEBUG: print "---Key: %s---" %key
+			if key == None:
+				raise ConfigFileSyntaxError.SyntaxError, "variable name not found"
+
+			if re.search("\`", line):       # is this a command?
+				if not self.allowExec:
+					raise ConfigFileSyntaxError.ExecNotAllowed, line
+
+				command = re.search("\`.*\`", line).group(0)
+				command = command[:-1]    # remove the last back tick
+				command = command[1:]     # remove the first back tick
+				#subsitute the command for a string
+				output = ""
+				for outline in os.popen(command, 'r').readlines():
+					output = output + outline[:-1]
+				output = output                # put it into a list
+				line = re.sub("\`.*\`", "\"" + output + "\"", line)
+				print line
+			
+			arrayItems = re.search("\(.*\)", line)			
+			if arrayItems:           # are we starting a list?
+				if DEBUG: print "---Starting a list!---"
+				continue
+			elif re.search("\[", line):         # are we working with an item of a list?
+				if DEBUG: print "---Modifying a value in a list---"
+				continue
+
+			if DEBUG: print line         # debug
 		
 
 class ConfigFilePython(ConfigFileGeneric):
@@ -166,8 +206,21 @@ class ConfigFilePython(ConfigFileGeneric):
 if __name__ == "__main__":
 	print "Performing tests..."
 	print "Testing Shell Mode..."
-	shell = ConfigFile("config.sh")
+	DEBUG = 0
+	try:
+		shell = ConfigFile("tests/config.sh")
+	except ConfigFileSyntaxError.ExecNotAllowed:
+		print "\tExecution Checking(disallowed)...ok"
+	else:
+		print "\tExecution Checking(disallowed)...failed"
+	try:
+		shell = ConfigFile("tests/config.sh", allowExec=1)
+	except ConfigFileSyntaxError.ExecNotAllowed:
+		print "\tExecution Checking(allowed)...failed"		
+	else:
+		print "\tExecution Checking(allowed)...ok"
+	
 
 
-	print "Testing Python Mode..."
-	python = ConfigFile("config.py")
+## 	print "Testing Python Mode..."
+## 	python = ConfigFile("tests/config.py")
